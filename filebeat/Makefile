@@ -2,7 +2,9 @@ BEAT_NAME?=filebeat
 BEAT_TITLE?=Filebeat
 SYSTEM_TESTS?=true
 TEST_ENVIRONMENT?=true
-GOX_FLAGS=-arch="amd64 386 arm ppc64 ppc64le"
+#GOX_FLAGS=-arch="amd64 386 arm ppc64 ppc64le"
+GOX_FLAGS=-arch="amd64 arm arm64"
+GOX_OS="linux"
 ES_BEATS?=..
 EXCLUDE_COMMON_UPDATE_TARGET=true
 
