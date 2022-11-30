@@ -36,7 +36,7 @@ import (
 )
 
 func init() {
-	outputs.RegisterType("minio", makeFileout)
+	outputs.RegisterType("minio", makeMinioOut)
 }
 
 type minioOutput struct {
@@ -73,8 +73,8 @@ func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo s
 	}
 }
 
-// makeFileout instantiates a new file output instance.
-func makeFileout(
+// makeMinioOut instantiates a new file output instance.
+func makeMinioOut(
 	_ outputs.IndexManager,
 	beat beat.Info,
 	observer outputs.Observer,
@@ -134,7 +134,6 @@ func (out *minioOutput) init(beat beat.Info, c config) error {
 	}
 
 	os.MkdirAll(out.filePath, 7777)
-
 	out.codec, err = codec.CreateEncoder(beat, c.Codec)
 	if err != nil {
 		return err
@@ -214,11 +213,11 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 			continue
 		}
 		logPath, err := event.Content.Fields.GetValue("log.file.path")
-		trackNo, _ := event.Content.Fields.GetValue("fields.trackNo")
-		podName, _ := event.Content.Fields.GetValue("fields.podName")
-		minioObjName, _ := event.Content.Fields.GetValue("fields.minioObjName")
-		limitSize, _ := event.Content.Fields.GetValue("fields.limitSize")
-		limitLine, _ := event.Content.Fields.GetValue("fields.limitLine")
+		trackNo, _ := event.Content.Fields.GetValue("trackNo")
+		podName, _ := event.Content.Fields.GetValue("podName")
+		minioObjName, _ := event.Content.Fields.GetValue("minioObjName")
+		limitSize, _ := event.Content.Fields.GetValue("limitSize")
+		limitLine, _ := event.Content.Fields.GetValue("limitLine")
 		if minioObjName == nil {
 			minioObjName = "pod-json.log"
 		}
@@ -234,7 +233,7 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 				limitSize = 100 * 1024 * 1024
 			}
 			if limitLine == nil {
-				limitLine = 10000
+				limitLine = 10000000
 			}
 			out.files[logPath.(string)] = out.NewFile(logPath.(string), filepath.Join(out.filePath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize), cast.ToInt32(limitLine))
 		}
