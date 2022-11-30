@@ -6,19 +6,21 @@ filebeat.inputs:
   # Paths that should be crawled and fetched. Glob based paths.
   paths:
     - /log/test.log
+  fields_under_root: true
   fields:
     trackNo: "uuid_test"
     minioObjName: "/uuid_test/test.log"
     podName: "train-test-11"
 - type: container
   enabled: true
+  fields_under_root: true
   paths:
     - /log/test2.log
   fields:
     trackNo: "uuid_test2"
     minioObjName: "/uuid_test2/test2.log"
     podName: "train-test-2222"
-    limitSize: 5000
+    limitSize: 50000
 filebeat.config.modules:
   path: ${path.config}/modules.d/*.yml
   reload.enabled: false

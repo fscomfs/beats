@@ -18,7 +18,9 @@
 package minio
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"fmt"
 	"github.com/elastic/beats/v7/libbeat/beat"
 	"github.com/elastic/beats/v7/libbeat/outputs"
@@ -29,9 +31,11 @@ import (
 	"github.com/hashicorp/go-uuid"
 	"github.com/minio/minio-go/v7"
 	"github.com/spf13/cast"
+	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -46,30 +50,82 @@ type minioOutput struct {
 	observer outputs.Observer
 	codec    codec.Codec
 	stopChan chan bool
-	files    map[string]*containLogFile
+	Files    map[string]*ContainLogFile
 	client   *minio.Client
+	mutex    sync.Mutex
 }
 
-type containLogFile struct {
-	file          *limitFile
-	inputFileName string
-	trackNo       string
-	podName       string
-	minioObjName  string
+type ContainLogFile struct {
+	File          *LimitFile `json:"file"`
+	InputFileName string     `json:"input_fileName"`
+	TrackNo       string     `json:"track_no"`
+	PodName       string     `json:"pod_name"`
+	MinioObjName  string     `json:"minio_obj_name"`
 }
 
-func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo string, podName string, minioObjName string, limitSize int64, limitLine int32) *containLogFile {
+func (out *minioOutput) marshal() {
+	//创建缓存
+	buf := new(bytes.Buffer)
+	//把指针丢进去
+	enc := gob.NewEncoder(buf)
+	err := enc.Encode(out.Files)
+	if err != nil {
+		return
+	}
+	if err := enc.Encode(out.Files); err == nil {
+		os.WriteFile(path.Join(out.filePath, "registry.log"), buf.Bytes(), 0600)
+	}
+}
+
+func (out *minioOutput) UnMarshal() {
+	out.mutex.Lock()
+	defer out.mutex.Unlock()
+	_, err := os.Stat(path.Join(out.filePath, "registry.log"))
+	if err != nil {
+		return
+	}
+	f, err := os.Open(path.Join(out.filePath, "registry.log"))
+	defer f.Close()
+	if err != nil {
+		return
+	}
+	content, err := ioutil.ReadAll(f)
+	if err != nil {
+		return
+	}
+	//创建缓存
+	decode := gob.NewDecoder(bytes.NewBuffer(content))
+	if err != nil {
+		return
+	}
+	containLogFile := make(map[string]*ContainLogFile)
+	decode.Decode(&containLogFile)
+	out.Files = containLogFile
+	for k, v := range out.Files {
+		if out.Files[k].File.file == nil {
+			f, err = os.OpenFile(v.File.FileName, os.O_WRONLY, 0600)
+			if err == nil {
+				f.Seek(v.File.Position, 0)
+				out.Files[k].File.file = f
+			} else {
+				delete(out.Files, k)
+			}
+		}
+	}
+}
+
+func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo string, podName string, minioObjName string, limitSize int64, limitLine int32) *ContainLogFile {
 	limitFile, err := NewFile(fileName, limitLine, limitSize)
 	if err != nil {
 		fmt.Errorf("NewFile Openfile error:%+v", err)
 		return nil
 	}
-	return &containLogFile{
-		file:          limitFile,
-		trackNo:       trackNo,
-		podName:       podName,
-		inputFileName: inputFileName,
-		minioObjName:  minioObjName,
+	return &ContainLogFile{
+		File:          limitFile,
+		TrackNo:       trackNo,
+		PodName:       podName,
+		InputFileName: inputFileName,
+		MinioObjName:  minioObjName,
 	}
 }
 
@@ -99,11 +155,11 @@ func makeMinioOut(
 	return outputs.Success(-1, 0, fo)
 }
 
-func (out *minioOutput) uploadMinio(limitFile *containLogFile, bucket string, objectName string) bool {
+func (out *minioOutput) uploadMinio(limitFile *ContainLogFile, bucket string, objectName string) bool {
 	ctx := context.Background()
 	uuidR, _ := uuid.GenerateUUID()
-	minioFileName := path.Join(out.filePath, uuidR)
-	if limitFile.file.CopyFile(minioFileName) {
+	minioFileName := path.Join(out.filePath, uuidR+"_tmp")
+	if limitFile.File.CopyFile(minioFileName) {
 		uploadFile, err := os.Open(minioFileName)
 		defer uploadFile.Close()
 		fileStat, err := uploadFile.Stat()
@@ -128,7 +184,7 @@ func (out *minioOutput) uploadMinio(limitFile *containLogFile, bucket string, ob
 func (out *minioOutput) init(beat beat.Info, c config) error {
 	out.filePath = c.Path
 	var err error
-	out.files = make(map[string]*containLogFile)
+	out.Files = make(map[string]*ContainLogFile)
 	if err != nil {
 		return err
 	}
@@ -152,23 +208,14 @@ func (out *minioOutput) init(beat beat.Info, c config) error {
 			panic("init minio error")
 		}
 	}
-	ticker := time.NewTicker(1 * time.Second)
+	out.UnMarshal()
+	ticker := time.NewTicker(3 * time.Second)
 	go func(ticker *time.Ticker) {
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				out.log.Infof("start upload minio")
-				for s := range out.files {
-					if _, err := os.Stat(s); err != nil {
-						out.log.Infof("do start upload minio fileName=%v", s)
-						success := out.uploadMinio(out.files[s], c.Bucket, out.files[s].minioObjName)
-						if success {
-							out.files[s].file.Remove()
-							delete(out.files, s)
-						}
-					}
-				}
+				out.UpLoad(c)
 			case stop := <-out.stopChan:
 				if stop {
 					out.log.Infof("stop upload minio")
@@ -180,13 +227,36 @@ func (out *minioOutput) init(beat beat.Info, c config) error {
 	out.log.Infof("Initialized file output. "+
 		"path=%v",
 		out.filePath)
+
+	out.log.Infof("check history file")
+
 	return nil
+}
+
+func (out *minioOutput) UpLoad(c config) {
+	out.mutex.Lock()
+	defer out.mutex.Unlock()
+	out.marshal()
+	for s := range out.Files {
+		if _, err := os.Stat(s); err != nil {
+			delayUploadTimer := time.NewTimer(3 * time.Second)
+			go func() {
+				<-delayUploadTimer.C
+				out.log.Infof("do start upload minio fileName=%v", s)
+				success := out.uploadMinio(out.Files[s], c.Bucket, out.Files[s].MinioObjName)
+				if success {
+					out.Files[s].File.Remove()
+					delete(out.Files, s)
+				}
+			}()
+		}
+	}
 }
 
 // Implement Outputer
 func (out *minioOutput) Close() error {
-	for s := range out.files {
-		out.files[s].file.Close()
+	for s := range out.Files {
+		out.Files[s].File.Close()
 	}
 	out.stopChan <- true
 	return nil
@@ -228,16 +298,16 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 			trackNo = "logPath"
 		}
 		inputFileName := path.Base(logPath.(string))
-		if _, ok := out.files[logPath.(string)]; !ok {
+		if _, ok := out.Files[logPath.(string)]; !ok {
 			if limitSize == nil {
 				limitSize = 100 * 1024 * 1024
 			}
 			if limitLine == nil {
 				limitLine = 10000000
 			}
-			out.files[logPath.(string)] = out.NewFile(logPath.(string), filepath.Join(out.filePath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize), cast.ToInt32(limitLine))
+			out.Files[logPath.(string)] = out.NewFile(logPath.(string), filepath.Join(out.filePath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize), cast.ToInt32(limitLine))
 		}
-		outFile := out.files[logPath.(string)].file
+		outFile := out.Files[logPath.(string)].File
 		if _, err = outFile.Write(append(serializedEvent, '\n')); err != nil {
 			st.WriteError(err)
 			if event.Guaranteed() {
