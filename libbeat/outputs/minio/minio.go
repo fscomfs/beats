@@ -282,6 +282,11 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 			dropped++
 			continue
 		}
+		contentStr, err := event.Content.Fields.GetValue("message")
+		var c []byte
+		if contentStr != nil {
+			c = []byte(contentStr.(string))
+		}
 		logPath, err := event.Content.Fields.GetValue("log.file.path")
 		trackNo, _ := event.Content.Fields.GetValue("trackNo")
 		podName, _ := event.Content.Fields.GetValue("podName")
@@ -308,7 +313,7 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 			out.Files[logPath.(string)] = out.NewFile(logPath.(string), filepath.Join(out.filePath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize), cast.ToInt32(limitLine))
 		}
 		outFile := out.Files[logPath.(string)].File
-		if _, err = outFile.Write(append(serializedEvent, '\n')); err != nil {
+		if _, err = outFile.Write(append(c, '\n')); err != nil {
 			st.WriteError(err)
 			if event.Guaranteed() {
 				out.log.Errorf("Writing event to file failed with: %+v", err)

@@ -1,51 +1,24 @@
-filebeat.registry.path: /data/registry/
-filebeat.inputs:
-- type: container
-  # Change to true to enable this input configuration.
-  enabled: true
-  # Paths that should be crawled and fetched. Glob based paths.
-  paths:
-    - /log/test.log
-  fields_under_root: true
-  fields:
-    trackNo: "uuid_test"
-    minioObjName: "/uuid_test/test.log"
-    podName: "train-test-11"
-- type: container
-  enabled: true
-  fields_under_root: true
-  paths:
-    - /log/test2.log
-  fields:
-    trackNo: "uuid_test2"
-    minioObjName: "/uuid_test2/test2.log"
-    podName: "train-test-2222"
-    limitSize: 50000
-filebeat.config.modules:
-  path: ${path.config}/modules.d/*.yml
-  reload.enabled: false
-  reload.period: 1s
-setup.template.settings:
-  index.number_of_shards: 1
-output.minio:
-  path: "/out/filebeat"
-  EndPoint: "192.168.1.175:9000"
-  Bucket: "cvmart-log"
-  UserName: "admin"
-  Password: "admin123"
-processors:
-  - add_host_metadata:
-      when.not.contains.tags: forwarded
-  - add_cloud_metadata: ~
-  - add_docker_metadata: ~
-  - add_kubernetes_metadata: ~
-
-# ================================== Logging ===================================
+filebeat:
+  config:
+    inputs:
+      enabled: true
+      path: /config/filebeat/prospectors.d/*yml
+      reload.enabled: true
+      reload.period: 2s
+  registry:
+    path: "/out/filebeat/registry"
+    file_permissions: 0600
+output:
+  minio:
+    path: "/out/filebeat/tmp/"
+    EndPoint: "192.168.1.175:9000"
+    Bucket: "cvmart-log"
+    UserName: "admin"
+    Password: "admin123"
 logging:
   level: info
-  to_files: true
+  to_files: false
   files:
-    path: "/var/log/filebeat"
-    name: "filebeat"
+    path: "/out/filebeat/log/"
+    name: "all.log"
 logging.selectors: ["*"]
-
