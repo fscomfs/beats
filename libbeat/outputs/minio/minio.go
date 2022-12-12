@@ -240,15 +240,13 @@ func (out *minioOutput) UpLoad(c config) {
 	for s := range out.Files {
 		if _, err := os.Stat(s); err != nil {
 			delayUploadTimer := time.NewTimer(3 * time.Second)
-			go func() {
-				<-delayUploadTimer.C
-				out.log.Infof("do start upload minio fileName=%v", s)
-				success := out.uploadMinio(out.Files[s], c.Bucket, out.Files[s].MinioObjName)
-				if success {
-					out.Files[s].File.Remove()
-					delete(out.Files, s)
-				}
-			}()
+			<-delayUploadTimer.C
+			out.log.Infof("do start upload minio fileName=%v", s)
+			success := out.uploadMinio(out.Files[s], c.Bucket, out.Files[s].MinioObjName)
+			if success {
+				out.Files[s].File.Remove()
+				delete(out.Files, s)
+			}
 		}
 	}
 }
