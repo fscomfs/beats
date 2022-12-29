@@ -72,6 +72,7 @@ func (l *LimitFile) Write(data []byte) (int, error) {
 			"the max file size (%d bytes)", dataLen, l.MaxSizeBytes)
 	}
 	if int64(dataLen)+l.Size > l.LimitSize {
+		l.file.Write(make([]byte, l.LimitSize-l.Position, l.LimitSize-l.Position))
 		l.file.Seek(0, 0)
 		l.RotatorSize = l.Position
 		l.Position = 0
@@ -108,7 +109,7 @@ func (l *LimitFile) CopyFile(toFileName string) bool {
 	//
 	linNum := int32(0)
 	for {
-		line, err := reader.ReadString('\n')
+		line, err := reader.ReadBytes('\n')
 		if err != nil && err != io.EOF {
 			return false
 		}
@@ -126,13 +127,16 @@ func (l *LimitFile) CopyFile(toFileName string) bool {
 				continue
 			}
 		}
+		if line[0] == 0 {
+			continue
+		}
 		if l.LimitLine <= linNum+1 {
 			return true
 		}
 		if isStart {
 			position += int64(len(line))
 		}
-		writer.WriteString(line)
+		writer.Write(line)
 		if position >= l.Position {
 			return true
 		}
