@@ -66,6 +66,7 @@ type ContainLogFile struct {
 	PodName       string     `json:"pod_name"`
 	MinioObjName  string     `json:"minio_obj_name"`
 	RemovedFlag   bool       `json:"removed_flag"`
+	UpdateFlag    bool       `json:"update_flag"`
 	RemovedTime   time.Time  `json:"removed_time"`
 }
 
@@ -98,21 +99,22 @@ func makeMinioOut(
 	return outputs.Success(-1, 0, fo)
 }
 
-func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo string, podName string, minioObjName string, limitSize int64) *ContainLogFile {
+func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo string, podName string, minioObjName string, limitSize int64) {
 	log.Printf("new Log file podName=%+v,minioObjName=%+v,inputFileName=%+v", podName, minioObjName, inputFileName)
 	limitFile, err := NewFile(fileName, limitSize)
 	if err != nil {
 		fmt.Errorf("NewFile Openfile error:%+v", err)
-		return nil
 	}
-	return &ContainLogFile{
+	out.Files[inputFileName] = &ContainLogFile{
 		File:          limitFile,
 		TrackNo:       trackNo,
 		PodName:       podName,
 		InputFileName: inputFileName,
 		MinioObjName:  minioObjName,
 		RemovedFlag:   false,
+		UpdateFlag:    true,
 	}
+
 }
 func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket string) bool {
 	ctx := context.Background()
@@ -250,16 +252,21 @@ func (out *minioOutput) UpLoad(c config) {
 	out.mutex.Lock()
 	defer out.mutex.Unlock()
 	out.marshal()
+	defer func() {
+		if err := recover(); err != nil {
+			log.Printf("Upload panic err %+v", err)
+		}
+	}()
 	for s := range out.Files {
 		if _, err := os.Stat(s); err != nil {
 			if !out.Files[s].RemovedFlag && os.IsNotExist(err) {
-				log.Printf("do upload minio start fileName=%+v", s)
+				log.Printf("do upload minio start pod name=%+v,fileName=%+v", out.Files[s].PodName, s)
 				success := out.uploadMinio(out.Files[s], c.Bucket)
 				if success {
 					out.RemoveMark(s)
 				}
 			} else {
-				if out.Files[s].RemovedFlag && out.Files[s].RemovedTime.UnixMilli()+3600*1000 <= time.Now().UnixMilli() {
+				if out.Files[s].RemovedFlag && out.Files[s].RemovedTime.UnixMilli()+600*1000 <= time.Now().UnixMilli() {
 					out.RemoveFile(s)
 				}
 			}
@@ -291,6 +298,7 @@ func (out *minioOutput) RemoveMark(fileName string) {
 	if _, ok := out.Files[fileName]; ok && !out.Files[fileName].RemovedFlag {
 		log.Printf("remove mark PodName=%+v", out.Files[fileName].PodName)
 		out.Files[fileName].RemovedFlag = true
+		out.Files[fileName].UpdateFlag = false
 		out.Files[fileName].RemovedTime = time.Now()
 	}
 }
@@ -299,8 +307,8 @@ func (out *minioOutput) RemoveFile(fileName string) {
 	out.mutex.Lock()
 	defer out.mutex.Unlock()
 	defer func() {
-		if error := recover(); error != nil {
-			fmt.Printf("Remove file error: %+v", error)
+		if err := recover(); err != nil {
+			fmt.Printf("Remove file error: %+v", err)
 		}
 	}()
 	if _, ok := out.Files[fileName]; ok {
@@ -308,6 +316,14 @@ func (out *minioOutput) RemoveFile(fileName string) {
 		out.Files[fileName].File.Close()
 		delete(out.Files, fileName)
 	}
+}
+
+func (out *minioOutput) Write(inputFileName string, data []byte) (int, error) {
+	if o, ok := out.Files[inputFileName]; ok {
+		o.UpdateFlag = true
+		return o.File.Write(data)
+	}
+	return 0, nil
 }
 
 func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error {
@@ -354,10 +370,9 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 			if limitSize == nil {
 				limitSize = 100 * 1024 * 1024
 			}
-			out.Files[logPath.(string)] = out.NewFile(logPath.(string), filepath.Join(out.outPath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize))
+			out.NewFile(logPath.(string), filepath.Join(out.outPath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize))
 		}
-		outFile := out.Files[logPath.(string)].File
-		if _, err = outFile.Write(append(c, '\n')); err != nil {
+		if _, err = out.Write(logPath.(string), append(c, '\n')); err != nil {
 			st.WriteError(err)
 			if event.Guaranteed() {
 				log.Printf("Writing event to file failed with: %+v", err)
