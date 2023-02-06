@@ -78,7 +78,9 @@ func (l *LimitFile) CopyFile(toFileName string) bool {
 		return false
 	}
 	var seek int64 = 0
+	var firstIgnore = false
 	if fileSize > l.LimitSize {
+		firstIgnore = true
 		seek = fileSize - l.LimitSize
 	}
 	file.Seek(seek, 0)
@@ -88,11 +90,11 @@ func (l *LimitFile) CopyFile(toFileName string) bool {
 	lineNum := 0
 	for {
 		if line, err := reader.ReadBytes('\n'); err == nil {
-			if lineNum == 0 {
+			lineNum++
+			if firstIgnore && lineNum == 1 {
 				continue
 			}
 			writer.Write(line)
-			lineNum++
 		} else {
 			if err == io.EOF {
 				return true

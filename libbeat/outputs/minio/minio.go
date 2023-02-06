@@ -179,7 +179,7 @@ func (out *minioOutput) minioOutInit(beat beat.Info, c config) error {
 		for {
 			select {
 			case <-ticker.C:
-				out.UpLoad(c)
+				out.upLoad(c)
 			case stop := <-out.stopChan:
 				if stop {
 					fmt.Printf("stop upload minio")
@@ -239,6 +239,7 @@ func (out *minioOutput) UploadByTrackNo(trackNo string) bool {
 		if out.Files[s].TrackNo == trackNo {
 			success := out.uploadMinio(out.Files[s], out.config.Bucket)
 			if success {
+				out.Files[s].UpdateFlag = false
 				return true
 			} else {
 				return false
@@ -248,7 +249,7 @@ func (out *minioOutput) UploadByTrackNo(trackNo string) bool {
 	return false
 }
 
-func (out *minioOutput) UpLoad(c config) {
+func (out *minioOutput) upLoad(c config) {
 	out.mutex.Lock()
 	defer out.mutex.Unlock()
 	out.marshal()
@@ -260,14 +261,16 @@ func (out *minioOutput) UpLoad(c config) {
 	for s := range out.Files {
 		if _, err := os.Stat(s); err != nil {
 			if !out.Files[s].RemovedFlag && os.IsNotExist(err) {
-				log.Printf("do upload minio start pod name=%+v,fileName=%+v", out.Files[s].PodName, s)
-				success := out.uploadMinio(out.Files[s], c.Bucket)
-				if success {
-					out.RemoveMark(s)
+				if out.Files[s].UpdateFlag {
+					log.Printf("do upload minio start pod name=%+v,fileName=%+v", out.Files[s].PodName, s)
+					success := out.uploadMinio(out.Files[s], c.Bucket)
+					if success {
+						out.removeMark(s)
+					}
 				}
 			} else {
 				if out.Files[s].RemovedFlag && out.Files[s].RemovedTime.UnixMilli()+600*1000 <= time.Now().UnixMilli() {
-					out.RemoveFile(s)
+					out.removeFile(s)
 				}
 			}
 
@@ -287,25 +290,21 @@ func (out *minioOutput) Close() error {
 	out.stopChan <- true
 	return nil
 }
-func (out *minioOutput) RemoveMark(fileName string) {
-	out.mutex.Lock()
-	defer out.mutex.Unlock()
+func (out *minioOutput) removeMark(fileName string) {
 	defer func() {
 		if error := recover(); error != nil {
 			fmt.Printf("Remove mark error: %+v", error)
 		}
 	}()
 	if _, ok := out.Files[fileName]; ok && !out.Files[fileName].RemovedFlag {
-		log.Printf("remove mark PodName=%+v", out.Files[fileName].PodName)
+		log.Printf("remove mark PodName=%+v,inputFileName=%+v", out.Files[fileName].PodName, out.Files[fileName].InputFileName)
 		out.Files[fileName].RemovedFlag = true
 		out.Files[fileName].UpdateFlag = false
 		out.Files[fileName].RemovedTime = time.Now()
 	}
 }
 
-func (out *minioOutput) RemoveFile(fileName string) {
-	out.mutex.Lock()
-	defer out.mutex.Unlock()
+func (out *minioOutput) removeFile(fileName string) {
 	defer func() {
 		if err := recover(); err != nil {
 			fmt.Printf("Remove file error: %+v", err)
@@ -314,11 +313,18 @@ func (out *minioOutput) RemoveFile(fileName string) {
 	if _, ok := out.Files[fileName]; ok {
 		log.Printf("remove file PodName=%+v", out.Files[fileName].PodName)
 		out.Files[fileName].File.Close()
+		os.Remove(out.Files[fileName].File.FileName)
 		delete(out.Files, fileName)
+
 	}
 }
 
 func (out *minioOutput) Write(inputFileName string, data []byte) (int, error) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Printf("Write inputFileName error %+v", inputFileName, err)
+		}
+	}()
 	if o, ok := out.Files[inputFileName]; ok {
 		o.UpdateFlag = true
 		return o.File.Write(data)
