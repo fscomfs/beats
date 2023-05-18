@@ -2,8 +2,9 @@ package minio
 
 import (
 	"bufio"
-	"fmt"
+	"bytes"
 	"io"
+	"math/rand"
 	"os"
 	"sync"
 )
@@ -11,7 +12,7 @@ import (
 type LimitFile struct {
 	file         *os.File
 	FileName     string `json:"file_name"`
-	MaxSizeBytes uint   `json:"max_size_bytes"`
+	MaxSizeBytes int    `json:"max_size_bytes"`
 	LimitSize    int64  `json:"limit_size"`
 	mutex        sync.Mutex
 }
@@ -24,7 +25,7 @@ func NewFile(fileName string, limitSize int64) (file *LimitFile, err error) {
 		return &LimitFile{
 			file:         file,
 			FileName:     fileName,
-			MaxSizeBytes: 10 * 1024 * 1024,
+			MaxSizeBytes: 20 * 1024,
 			LimitSize:    limitSize,
 		}, nil
 	} else {
@@ -53,13 +54,9 @@ func (l *LimitFile) Remove() {
 func (l *LimitFile) Write(data []byte) (int, error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	dataLen := uint(len(data))
-	if dataLen > l.MaxSizeBytes {
-		return 0, fmt.Errorf("data size (%d bytes) is greater than "+
-			"the max file size (%d bytes)", dataLen, l.MaxSizeBytes)
-	}
-	l.file.Write(data)
-	return int(dataLen), nil
+	dataLen := len(data)
+	l.file.Write(l.LineConfound(data))
+	return dataLen, nil
 }
 
 func (l *LimitFile) CopyFile(toFileName string) bool {
@@ -104,4 +101,25 @@ func (l *LimitFile) CopyFile(toFileName string) bool {
 		}
 	}
 
+}
+
+var zz = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+var zzLen = 26 * 2
+
+func (l *LimitFile) LineConfound(line []byte) []byte {
+	rIndex := bytes.LastIndexByte(line, '\r')
+	if rIndex > 0 {
+		line = line[rIndex+1:]
+	}
+	lens := len(line)
+	if lens > l.MaxSizeBytes {
+		line = line[:l.MaxSizeBytes]
+		lens = l.MaxSizeBytes
+		for i := 0; i < lens/400; i++ {
+			s := rand.Intn(zzLen)
+			is := rand.Intn(lens)
+			line = append(line[:is+1], append([]byte{zz[s]}, line[is+1:]...)...)
+		}
+	}
+	return line
 }

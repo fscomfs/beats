@@ -371,14 +371,14 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 		if trackNo == nil {
 			trackNo = "logPath"
 		}
-		inputFileName := path.Base(logPath.(string))
-		if _, ok := out.Files[logPath.(string)]; !ok {
+		inputFileName := path.Base(cast.ToString(logPath))
+		if _, ok := out.Files[cast.ToString(logPath)]; !ok {
 			if limitSize == nil {
 				limitSize = 100 * 1024 * 1024
 			}
-			out.NewFile(logPath.(string), filepath.Join(out.outPath, inputFileName), trackNo.(string), podName.(string), minioObjName.(string), cast.ToInt64(limitSize))
+			out.NewFile(cast.ToString(logPath), filepath.Join(out.outPath, inputFileName), cast.ToString(trackNo), cast.ToString(podName), cast.ToString(minioObjName), cast.ToInt64(limitSize))
 		}
-		if _, err = out.Write(logPath.(string), append(c, '\n')); err != nil {
+		if _, err = out.Write(cast.ToString(logPath), append(c, '\n')); err != nil {
 			st.WriteError(err)
 			if event.Guaranteed() {
 				log.Printf("Writing event to file failed with: %+v", err)
