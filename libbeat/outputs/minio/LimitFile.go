@@ -3,6 +3,8 @@ package minio
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
+	"github.com/spf13/cast"
 	"io"
 	"math/rand"
 	"os"
@@ -51,11 +53,24 @@ func (l *LimitFile) Remove() {
 	}
 }
 
-func (l *LimitFile) Write(data []byte) (int, error) {
+func (l *LimitFile) Write(data []byte) (ret int, re error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	dataLen := len(data)
-	l.file.Write(l.LineConfound(data))
+	defer func() {
+		if e := recover(); e != nil {
+			ret = dataLen
+		}
+	}()
+	var j interface{}
+	e := json.Unmarshal(data, &j)
+	if e != nil {
+		l.file.Write(l.LineConfound(data))
+	}
+	jsonData := j.(map[string]interface{})
+	if logContent, ok := jsonData["log"]; ok {
+		l.file.Write(l.LineConfound([]byte(cast.ToString(logContent))))
+	}
 	return dataLen, nil
 }
 
