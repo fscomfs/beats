@@ -322,7 +322,7 @@ func (out *minioOutput) removeFile(fileName string) {
 func (out *minioOutput) Write(inputFileName string, data []byte) (int, error) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("Write inputFileName error %+v", inputFileName, err)
+			log.Printf("Write inputFileName %+v error %+v", inputFileName, err)
 		}
 	}()
 	if o, ok := out.Files[inputFileName]; ok {

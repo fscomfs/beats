@@ -69,7 +69,7 @@ func (l *LimitFile) Write(data []byte) (ret int, re error) {
 	}
 	jsonData := j.(map[string]interface{})
 	if logContent, ok := jsonData["log"]; ok {
-		l.file.Write(l.LineConfound([]byte(cast.ToString(logContent))))
+		l.file.Write(append(l.LineConfound([]byte(cast.ToString(logContent))), '\n'))
 	}
 	return dataLen, nil
 }
