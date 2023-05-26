@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"github.com/elastic/beats/v7/libbeat/beat"
 	"github.com/elastic/beats/v7/libbeat/outputs"
@@ -38,6 +39,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -47,27 +49,37 @@ func init() {
 	outputs.RegisterType("minio", makeMinioOut)
 }
 
+type LocalUploadLogParam struct {
+	TrackNo       string    `json:"trackNo"`
+	Message       string    `json:"message"`
+	ContainerName string    `json:"containerName"`
+	MinioObjName  string    `json:"minioObjName"`
+	CreateTime    time.Time `json:"createTime"`
+}
+
 type minioOutput struct {
-	outPath  string
-	beat     beat.Info
-	observer outputs.Observer
-	codec    codec.Codec
-	stopChan chan bool
-	Files    map[string]*ContainLogFile
-	client   *minio.Client
-	mutex    sync.Mutex
-	config   *config
+	outPath       string
+	beat          beat.Info
+	observer      outputs.Observer
+	codec         codec.Codec
+	stopChan      chan bool
+	Files         map[string]*ContainLogFile
+	AppendMessage map[string]LocalUploadLogParam
+	client        *minio.Client
+	mutex         sync.Mutex
+	config        *config
 }
 
 type ContainLogFile struct {
 	File          *LimitFile `json:"file"`
 	InputFileName string     `json:"input_fileName"`
 	TrackNo       string     `json:"track_no"`
-	PodName       string     `json:"pod_name"`
+	ContainerName string     `json:"container_name"`
 	MinioObjName  string     `json:"minio_obj_name"`
 	RemovedFlag   bool       `json:"removed_flag"`
 	UpdateFlag    bool       `json:"update_flag"`
 	RemovedTime   time.Time  `json:"removed_time"`
+	AppendMessage string     `json:"append_message"`
 }
 
 // makeMinioOut instantiates a new file output instance.
@@ -99,8 +111,8 @@ func makeMinioOut(
 	return outputs.Success(-1, 0, fo)
 }
 
-func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo string, podName string, minioObjName string, limitSize int64) {
-	log.Printf("new Log file podName=%+v,minioObjName=%+v,inputFileName=%+v", podName, minioObjName, inputFileName)
+func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo string, containerName string, minioObjName string, limitSize int64) {
+	log.Printf("new Log file containerName=%+v,minioObjName=%+v,inputFileName=%+v", containerName, minioObjName, inputFileName)
 	limitFile, err := NewFile(fileName, limitSize)
 	if err != nil {
 		fmt.Errorf("NewFile Openfile error:%+v", err)
@@ -108,7 +120,7 @@ func (out *minioOutput) NewFile(inputFileName string, fileName string, trackNo s
 	out.Files[inputFileName] = &ContainLogFile{
 		File:          limitFile,
 		TrackNo:       trackNo,
-		PodName:       podName,
+		ContainerName: containerName,
 		InputFileName: inputFileName,
 		MinioObjName:  minioObjName,
 		RemovedFlag:   false,
@@ -126,14 +138,22 @@ func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket strin
 		}
 	}()
 	defer os.Remove(minioFileName)
-	if containLogFile.File.CopyFile(minioFileName) {
+	appendMessage := containLogFile.AppendMessage
+	for _, m := range out.AppendMessage {
+		if m.TrackNo == containLogFile.TrackNo && m.TrackNo != "" && m.ContainerName == containLogFile.ContainerName && m.ContainerName != "" {
+			if containLogFile.AppendMessage == "" {
+				appendMessage = m.Message
+			}
+		}
+	}
+	if containLogFile.File.CopyFile(minioFileName, appendMessage) {
 		uploadFile, err := os.Open(minioFileName)
 		defer uploadFile.Close()
 		fileStat, err := uploadFile.Stat()
 		if err == nil {
 			_, err = out.client.PutObject(ctx, bucket, containLogFile.MinioObjName, uploadFile, fileStat.Size(), minio.PutObjectOptions{ContentType: "application/octet-stream"})
 			if err == nil {
-				log.Printf("log upload minio success podName=%+v,minioObjName=%+v", containLogFile.PodName, containLogFile.MinioObjName)
+				log.Printf("log upload minio success ContainerName=%+v,minioObjName=%+v", containLogFile.ContainerName, containLogFile.MinioObjName)
 				return true
 			} else {
 				log.Printf("upload minio error:%+v", containLogFile.MinioObjName)
@@ -203,12 +223,22 @@ func (out *minioOutput) ApiInit() {
 		go func() {
 			m := http.NewServeMux()
 			m.HandleFunc("/uploadFile", func(w http.ResponseWriter, r *http.Request) {
-				trackNo := r.URL.Query().Get("trackNo")
-				log.Printf("api uploadFile trackNo=%+v", trackNo)
-				if out.UploadByTrackNo(trackNo) {
-					w.Write([]byte("1"))
-				} else {
+				defer func() {
+					if err := recover(); err != nil {
+						log.Printf("api uploadFile recover error:%+v", err)
+					}
+				}()
+				var param LocalUploadLogParam
+				err := json.NewDecoder(r.Body).Decode(param)
+				if err != nil {
+					log.Printf("api uploadFile parse param error:%+v", err)
+				}
+				log.Printf("api uploadFile param=%+v", param)
+				if ok, err := out.UploadByParam(param); !ok {
+					log.Printf("api uploadFile error: %+v", err)
 					w.Write([]byte("0"))
+				} else {
+					w.Write([]byte("1"))
 				}
 				w.WriteHeader(http.StatusOK)
 			})
@@ -232,21 +262,35 @@ func (out *minioOutput) ApiInit() {
 
 }
 
-func (out *minioOutput) UploadByTrackNo(trackNo string) bool {
-	out.mutex.Lock()
-	defer out.mutex.Unlock()
+func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
+	containerLogFileExist := false
 	for s := range out.Files {
-		if out.Files[s].TrackNo == trackNo {
+		if out.Files[s].TrackNo == param.TrackNo {
+			if param.ContainerName != "" && param.ContainerName == out.Files[s].ContainerName {
+				containerLogFileExist = true
+				if param.Message != "" {
+					out.Files[s].AppendMessage = param.Message
+				}
+			}
 			success := out.uploadMinio(out.Files[s], out.config.Bucket)
-			if success {
-				out.Files[s].UpdateFlag = false
-				return true
+			if !success {
+				return false, fmt.Errorf("upload minio error param:%+v", param)
 			} else {
-				return false
+				out.Files[s].UpdateFlag = false
 			}
 		}
 	}
-	return false
+	if !containerLogFileExist && param.MinioObjName != "" && param.ContainerName != "" {
+		_, err := out.client.PutObject(context.Background(), out.config.Bucket, param.MinioObjName, strings.NewReader(param.Message), int64(len(param.Message)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
+		if err != nil {
+			return false, err
+		} else {
+			param.CreateTime = time.Now()
+			out.AppendMessage[param.TrackNo] = param
+			return true, nil
+		}
+	}
+	return true, nil
 }
 
 func (out *minioOutput) upLoad(c config) {
@@ -258,15 +302,24 @@ func (out *minioOutput) upLoad(c config) {
 			log.Printf("Upload panic err %+v", err)
 		}
 	}()
+
+	for k, m := range out.AppendMessage {
+		if m.CreateTime.UnixMilli() < time.Now().UnixMilli()+1000*3600 {
+			delete(out.AppendMessage, k)
+		}
+	}
+
 	for s := range out.Files {
 		if _, err := os.Stat(s); err != nil {
 			if !out.Files[s].RemovedFlag && os.IsNotExist(err) {
 				if out.Files[s].UpdateFlag {
-					log.Printf("do upload minio start pod name=%+v,fileName=%+v", out.Files[s].PodName, s)
+					log.Printf("do upload minio start pod name=%+v,fileName=%+v", out.Files[s].ContainerName, s)
 					success := out.uploadMinio(out.Files[s], c.Bucket)
 					if success {
 						out.removeMark(s)
 					}
+				} else {
+					out.removeMark(s)
 				}
 			} else {
 				if out.Files[s].RemovedFlag && out.Files[s].RemovedTime.UnixMilli()+600*1000 <= time.Now().UnixMilli() {
@@ -297,7 +350,7 @@ func (out *minioOutput) removeMark(fileName string) {
 		}
 	}()
 	if _, ok := out.Files[fileName]; ok && !out.Files[fileName].RemovedFlag {
-		log.Printf("remove mark PodName=%+v,inputFileName=%+v", out.Files[fileName].PodName, out.Files[fileName].InputFileName)
+		log.Printf("remove mark PodName=%+v,inputFileName=%+v", out.Files[fileName].ContainerName, out.Files[fileName].InputFileName)
 		out.Files[fileName].RemovedFlag = true
 		out.Files[fileName].UpdateFlag = false
 		out.Files[fileName].RemovedTime = time.Now()
@@ -311,7 +364,7 @@ func (out *minioOutput) removeFile(fileName string) {
 		}
 	}()
 	if _, ok := out.Files[fileName]; ok {
-		log.Printf("remove file PodName=%+v", out.Files[fileName].PodName)
+		log.Printf("remove file ContainerName=%+v", out.Files[fileName].ContainerName)
 		out.Files[fileName].File.Close()
 		os.Remove(out.Files[fileName].File.FileName)
 		delete(out.Files, fileName)
@@ -359,14 +412,14 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 		}
 		logPath, err := event.Content.Fields.GetValue("log.file.path")
 		trackNo, _ := event.Content.Fields.GetValue("trackNo")
-		podName, _ := event.Content.Fields.GetValue("podName")
+		containerName, _ := event.Content.Fields.GetValue("containerName")
 		minioObjName, _ := event.Content.Fields.GetValue("minioObjName")
 		limitSize, _ := event.Content.Fields.GetValue("limitSize")
 		if minioObjName == nil {
 			minioObjName = "pod-json.log"
 		}
-		if podName == nil {
-			podName = "k8s"
+		if containerName == nil {
+			containerName = "k8s"
 		}
 		if trackNo == nil {
 			trackNo = "logPath"
@@ -376,7 +429,7 @@ func (out *minioOutput) Publish(_ context.Context, batch publisher.Batch) error 
 			if limitSize == nil {
 				limitSize = 100 * 1024 * 1024
 			}
-			out.NewFile(cast.ToString(logPath), filepath.Join(out.outPath, inputFileName), cast.ToString(trackNo), cast.ToString(podName), cast.ToString(minioObjName), cast.ToInt64(limitSize))
+			out.NewFile(cast.ToString(logPath), filepath.Join(out.outPath, inputFileName), cast.ToString(trackNo), cast.ToString(containerName), cast.ToString(minioObjName), cast.ToInt64(limitSize))
 		}
 		if _, err = out.Write(cast.ToString(logPath), append(c, '\n')); err != nil {
 			st.WriteError(err)

@@ -74,7 +74,7 @@ func (l *LimitFile) Write(data []byte) (ret int, re error) {
 	return dataLen, nil
 }
 
-func (l *LimitFile) CopyFile(toFileName string) bool {
+func (l *LimitFile) CopyFile(toFileName string, appendMessage string) bool {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	file, err := os.OpenFile(l.FileName, os.O_RDONLY, 0644)
@@ -109,6 +109,9 @@ func (l *LimitFile) CopyFile(toFileName string) bool {
 			writer.Write(line)
 		} else {
 			if err == io.EOF {
+				if appendMessage != "" {
+					writer.Write([]byte(appendMessage + "\n"))
+				}
 				return true
 			} else {
 				return false
