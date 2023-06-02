@@ -229,7 +229,7 @@ func (out *minioOutput) ApiInit() {
 					}
 				}()
 				var param LocalUploadLogParam
-				err := json.NewDecoder(r.Body).Decode(param)
+				err := json.NewDecoder(r.Body).Decode(&param)
 				if err != nil {
 					log.Printf("api uploadFile parse param error:%+v", err)
 				}
