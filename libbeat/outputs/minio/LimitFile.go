@@ -69,7 +69,7 @@ func (l *LimitFile) Write(data []byte) (ret int, re error) {
 	}
 	jsonData := j.(map[string]interface{})
 	if logContent, ok := jsonData["log"]; ok {
-		l.file.Write(append(l.LineConfound([]byte(cast.ToString(logContent))), '\n'))
+		l.file.Write(l.LineConfound([]byte(cast.ToString(logContent))))
 	}
 	return dataLen, nil
 }
@@ -131,9 +131,7 @@ func (l *LimitFile) LineConfound(line []byte) []byte {
 	}
 	lens := len(line)
 	if lens > l.MaxSizeBytes {
-		line = line[:l.MaxSizeBytes]
-		lens = l.MaxSizeBytes
-		for i := 0; i < lens/400; i++ {
+		for i := 0; i < lens/200; i++ {
 			s := rand.Intn(zzLen)
 			is := rand.Intn(lens)
 			line = append(line[:is+1], append([]byte{zz[s]}, line[is+1:]...)...)

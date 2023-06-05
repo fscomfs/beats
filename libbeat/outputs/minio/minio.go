@@ -64,7 +64,7 @@ type minioOutput struct {
 	codec         codec.Codec
 	stopChan      chan bool
 	Files         map[string]*ContainLogFile
-	AppendMessage map[string]LocalUploadLogParam
+	AppendMessage map[string]*LocalUploadLogParam
 	client        *minio.Client
 	mutex         sync.Mutex
 	config        *config
@@ -100,9 +100,10 @@ func makeMinioOut(
 	logFile, _ := os.OpenFile("/out/filebeat/log/all.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	log.SetOutput(logFile)
 	fo := &minioOutput{
-		beat:     beat,
-		observer: observer,
-		config:   &config,
+		beat:          beat,
+		observer:      observer,
+		config:        &config,
+		AppendMessage: make(map[string]*LocalUploadLogParam),
 	}
 	if err := fo.minioOutInit(beat, config); err != nil {
 		return outputs.Fail(err)
@@ -141,7 +142,7 @@ func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket strin
 	appendMessage := containLogFile.AppendMessage
 	for _, m := range out.AppendMessage {
 		if m.TrackNo == containLogFile.TrackNo && m.TrackNo != "" && m.ContainerName == containLogFile.ContainerName && m.ContainerName != "" {
-			if containLogFile.AppendMessage == "" {
+			if appendMessage == "" {
 				appendMessage = m.Message
 			}
 		}
@@ -226,12 +227,15 @@ func (out *minioOutput) ApiInit() {
 				defer func() {
 					if err := recover(); err != nil {
 						log.Printf("api uploadFile recover error:%+v", err)
+						w.WriteHeader(http.StatusBadRequest)
 					}
 				}()
 				var param LocalUploadLogParam
 				err := json.NewDecoder(r.Body).Decode(&param)
 				if err != nil {
 					log.Printf("api uploadFile parse param error:%+v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
 				}
 				log.Printf("api uploadFile param=%+v", param)
 				if ok, err := out.UploadByParam(param); !ok {
@@ -273,6 +277,7 @@ func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
 				}
 			}
 			success := out.uploadMinio(out.Files[s], out.config.Bucket)
+			log.Printf("UploadByParam uploadMinio:trackNo:%+v,containerName:%+v", param.TrackNo, out.Files[s].ContainerName)
 			if !success {
 				return false, fmt.Errorf("upload minio error param:%+v", param)
 			} else {
@@ -281,12 +286,14 @@ func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
 		}
 	}
 	if !containerLogFileExist && param.MinioObjName != "" && param.ContainerName != "" {
+		log.Printf("UploadByParam not exist file append message containerName:%+v", param.ContainerName)
+		param.CreateTime = time.Now()
+		out.AppendMessage[param.TrackNo] = &param
 		_, err := out.client.PutObject(context.Background(), out.config.Bucket, param.MinioObjName, strings.NewReader(param.Message), int64(len(param.Message)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
 		if err != nil {
 			return false, err
 		} else {
-			param.CreateTime = time.Now()
-			out.AppendMessage[param.TrackNo] = param
+
 			return true, nil
 		}
 	}
