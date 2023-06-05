@@ -10,5 +10,5 @@ func TestFile(t *testing.T) {
 
 	}
 
-	limitFile.CopyFile("/tmp/test2.log")
+	limitFile.CopyFile("/tmp/test2.log", "")
 }

@@ -70,6 +70,7 @@ func (l *LimitFile) Write(data []byte) (ret int, re error) {
 	jsonData := j.(map[string]interface{})
 	if logContent, ok := jsonData["log"]; ok {
 		l.file.Write(l.LineConfound([]byte(cast.ToString(logContent))))
+
 	}
 	return dataLen, nil
 }
@@ -90,35 +91,38 @@ func (l *LimitFile) CopyFile(toFileName string, appendMessage string) bool {
 		return false
 	}
 	var seek int64 = 0
-	var firstIgnore = false
 	if fileSize > l.LimitSize {
-		firstIgnore = true
 		seek = fileSize - l.LimitSize
 	}
 	file.Seek(seek, 0)
 	writer := bufio.NewWriter(toFile)
 	defer writer.Flush()
 	reader := bufio.NewReader(file)
-	lineNum := 0
-	for {
-		if line, err := reader.ReadBytes('\n'); err == nil {
-			lineNum++
-			if firstIgnore && lineNum == 1 {
-				continue
-			}
-			writer.Write(line)
-		} else {
-			if err == io.EOF {
-				if appendMessage != "" {
-					writer.Write([]byte(appendMessage + "\n"))
+	if seek > 0 {
+		lineNum := 0
+		for {
+			if line, err := reader.ReadBytes('\n'); err == nil {
+				lineNum++
+				if lineNum == 1 {
+					continue
 				}
-				return true
+				writer.Write(line)
 			} else {
-				return false
+				if err == io.EOF {
+
+					return true
+				} else {
+					return false
+				}
 			}
 		}
+	} else {
+		io.Copy(writer, reader)
 	}
-
+	if appendMessage != "" {
+		writer.Write([]byte("\n" + appendMessage + "\n"))
+	}
+	return true
 }
 
 var zz = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"

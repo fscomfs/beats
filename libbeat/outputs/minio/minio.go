@@ -142,7 +142,7 @@ func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket strin
 	appendMessage := containLogFile.AppendMessage
 	for _, m := range out.AppendMessage {
 		if m.TrackNo == containLogFile.TrackNo && m.TrackNo != "" && m.ContainerName == containLogFile.ContainerName && m.ContainerName != "" {
-			if appendMessage == "" {
+			if appendMessage == "" && m.Message != "" {
 				appendMessage = m.Message
 			}
 		}
@@ -276,8 +276,8 @@ func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
 					out.Files[s].AppendMessage = param.Message
 				}
 			}
+			log.Printf("UploadByParam uploadMinio:trackNo:%+v,containerName:%+v,appendMessage:%+v", param.TrackNo, out.Files[s].ContainerName, param.Message)
 			success := out.uploadMinio(out.Files[s], out.config.Bucket)
-			log.Printf("UploadByParam uploadMinio:trackNo:%+v,containerName:%+v", param.TrackNo, out.Files[s].ContainerName)
 			if !success {
 				return false, fmt.Errorf("upload minio error param:%+v", param)
 			} else {
