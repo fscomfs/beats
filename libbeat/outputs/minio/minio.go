@@ -147,6 +147,7 @@ func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket strin
 			}
 		}
 	}
+	log.Printf("upload minio trackNo:%+v,containerName:%+v,appendMessage:%+v", containLogFile.TrackNo, containLogFile.ContainerName, appendMessage)
 	if containLogFile.File.CopyFile(minioFileName, appendMessage) {
 		uploadFile, err := os.Open(minioFileName)
 		defer uploadFile.Close()
@@ -154,7 +155,7 @@ func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket strin
 		if err == nil {
 			_, err = out.client.PutObject(ctx, bucket, containLogFile.MinioObjName, uploadFile, fileStat.Size(), minio.PutObjectOptions{ContentType: "application/octet-stream"})
 			if err == nil {
-				log.Printf("log upload minio success ContainerName=%+v,minioObjName=%+v", containLogFile.ContainerName, containLogFile.MinioObjName)
+				log.Printf("log upload minio success ContainerName=%+v,minioObjName=%+v,appendMessage=%+v", containLogFile.ContainerName, containLogFile.MinioObjName, appendMessage)
 				return true
 			} else {
 				log.Printf("upload minio error:%+v", containLogFile.MinioObjName)
@@ -276,7 +277,6 @@ func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
 					out.Files[s].AppendMessage = param.Message
 				}
 			}
-			log.Printf("UploadByParam uploadMinio:trackNo:%+v,containerName:%+v,appendMessage:%+v", param.TrackNo, out.Files[s].ContainerName, param.Message)
 			success := out.uploadMinio(out.Files[s], out.config.Bucket)
 			if !success {
 				return false, fmt.Errorf("upload minio error param:%+v", param)
@@ -289,6 +289,7 @@ func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
 		log.Printf("UploadByParam not exist file append message containerName:%+v", param.ContainerName)
 		param.CreateTime = time.Now()
 		out.AppendMessage[param.TrackNo] = &param
+		log.Printf("UploadByParam not exist file append message containerName:%+v,globMessage:%+v", param.ContainerName, out.AppendMessage)
 		_, err := out.client.PutObject(context.Background(), out.config.Bucket, param.MinioObjName, strings.NewReader(param.Message), int64(len(param.Message)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
 		if err != nil {
 			return false, err
@@ -312,6 +313,7 @@ func (out *minioOutput) upLoad(c config) {
 
 	for k, m := range out.AppendMessage {
 		if m.CreateTime.UnixMilli() < time.Now().UnixMilli()+1000*3600 {
+			log.Printf("delete AppendMessage key=%+v,val=%+v", k, m)
 			delete(out.AppendMessage, k)
 		}
 	}

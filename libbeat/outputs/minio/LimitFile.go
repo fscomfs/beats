@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/spf13/cast"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"sync"
@@ -78,6 +79,11 @@ func (l *LimitFile) Write(data []byte) (ret int, re error) {
 func (l *LimitFile) CopyFile(toFileName string, appendMessage string) bool {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
+	defer func() {
+		if err := recover(); err != nil {
+			log.Printf("CopyFile error %+v", err)
+		}
+	}()
 	file, err := os.OpenFile(l.FileName, os.O_RDONLY, 0644)
 	defer file.Close()
 	var fileSize int64 = 0
@@ -109,18 +115,20 @@ func (l *LimitFile) CopyFile(toFileName string, appendMessage string) bool {
 				writer.Write(line)
 			} else {
 				if err == io.EOF {
-
-					return true
+					break
 				} else {
-					return false
+					break
 				}
 			}
 		}
 	} else {
 		io.Copy(writer, reader)
 	}
+
 	if appendMessage != "" {
+		log.Printf("Copy file success append message %+v", appendMessage)
 		writer.Write([]byte("\n" + appendMessage + "\n"))
+		writer.Flush()
 	}
 	return true
 }
