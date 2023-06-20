@@ -57,6 +57,11 @@ type LocalUploadLogParam struct {
 	CreateTime    time.Time `json:"createTime"`
 }
 
+type UploadByParamRes struct {
+	trackFlag  int `json:"trackFlag"`
+	uploadCode int `json:"uploadCode"`
+}
+
 type minioOutput struct {
 	outPath       string
 	beat          beat.Info
@@ -239,12 +244,9 @@ func (out *minioOutput) ApiInit() {
 					return
 				}
 				log.Printf("api uploadFile param=%+v", param)
-				if ok, err := out.UploadByParam(param); !ok {
-					log.Printf("api uploadFile error: %+v", err)
-					w.Write([]byte("0"))
-				} else {
-					w.Write([]byte("1"))
-				}
+				res, err := out.UploadByParam(param)
+				b, _ := json.Marshal(res)
+				w.Write(b)
 				w.WriteHeader(http.StatusOK)
 			})
 			server := http.Server{
@@ -267,20 +269,27 @@ func (out *minioOutput) ApiInit() {
 
 }
 
-func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
+func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (res UploadByParamRes, e error) {
 	containerLogFileExist := false
+	res = UploadByParamRes{
+		uploadCode: 0,
+		trackFlag:  0,
+	}
 	for s := range out.Files {
 		if out.Files[s].TrackNo == param.TrackNo {
 			if param.ContainerName != "" && param.ContainerName == out.Files[s].ContainerName {
 				containerLogFileExist = true
+				res.trackFlag = 1
 				if param.Message != "" {
 					out.Files[s].AppendMessage = param.Message
 				}
 			}
 			success := out.uploadMinio(out.Files[s], out.config.Bucket)
 			if !success {
-				return false, fmt.Errorf("upload minio error param:%+v", param)
+				res.uploadCode = 0
+				return res, fmt.Errorf("upload minio error param:%+v", param)
 			} else {
+				res.uploadCode = 1
 				out.Files[s].UpdateFlag = false
 			}
 		}
@@ -292,13 +301,14 @@ func (out *minioOutput) UploadByParam(param LocalUploadLogParam) (bool, error) {
 		log.Printf("UploadByParam not exist file append message containerName:%+v,globMessage:%+v", param.ContainerName, out.AppendMessage)
 		_, err := out.client.PutObject(context.Background(), out.config.Bucket, param.MinioObjName, strings.NewReader(param.Message), int64(len(param.Message)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
 		if err != nil {
-			return false, err
+			res.uploadCode = 0
+			return res, err
 		} else {
-
-			return true, nil
+			res.uploadCode = 1
+			return res, nil
 		}
 	}
-	return true, nil
+	return res, nil
 }
 
 func (out *minioOutput) upLoad(c config) {
