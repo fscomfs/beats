@@ -158,6 +158,14 @@ func (out *minioOutput) uploadMinio(containLogFile *ContainLogFile, bucket strin
 		defer uploadFile.Close()
 		fileStat, err := uploadFile.Stat()
 		if err == nil {
+			doUpload := false
+			objInfo, objStateErr := out.client.StatObject(ctx, bucket, containLogFile.MinioObjName, minio.StatObjectOptions{})
+			if objStateErr != nil || (objInfo.Size < fileStat.Size()) {
+				doUpload = true
+			}
+			if !doUpload {
+				return true
+			}
 			_, err = out.client.PutObject(ctx, bucket, containLogFile.MinioObjName, uploadFile, fileStat.Size(), minio.PutObjectOptions{ContentType: "application/octet-stream"})
 			if err == nil {
 				log.Printf("log upload minio success ContainerName=%+v,minioObjName=%+v,appendMessage=%+v", containLogFile.ContainerName, containLogFile.MinioObjName, appendMessage)
