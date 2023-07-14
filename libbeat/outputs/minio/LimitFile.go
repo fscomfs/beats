@@ -28,7 +28,7 @@ func NewFile(fileName string, limitSize int64) (file *LimitFile, err error) {
 		return &LimitFile{
 			file:         file,
 			FileName:     fileName,
-			MaxSizeBytes: 20 * 1024,
+			MaxSizeBytes: 4 * 1024,
 			LimitSize:    limitSize,
 		}, nil
 	} else {
@@ -133,19 +133,19 @@ func (l *LimitFile) CopyFile(toFileName string, appendMessage string) bool {
 	return true
 }
 
-var zz = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-var zzLen = 26 * 2
+var zz = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ*<>_"
+var zzLen = len(zz)
 
 func (l *LimitFile) LineConfound(line []byte) []byte {
 	rIndex := bytes.LastIndexByte(line, '\r')
-	if rIndex > 0 {
+	if rIndex > 0 && (rIndex+2) <= len(line) {
 		line = line[rIndex+1:]
 	}
 	lens := len(line)
 	if lens > l.MaxSizeBytes {
-		for i := 0; i < lens/200; i++ {
-			s := rand.Intn(zzLen)
-			is := rand.Intn(lens)
+		for i := 0; i < lens/600; i++ {
+			s := rand.Intn(zzLen - 1)
+			is := rand.Intn(lens - 2)
 			line = append(line[:is+1], append([]byte{zz[s]}, line[is+1:]...)...)
 		}
 	}
