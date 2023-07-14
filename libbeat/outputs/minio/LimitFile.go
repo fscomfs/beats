@@ -133,7 +133,7 @@ func (l *LimitFile) CopyFile(toFileName string, appendMessage string) bool {
 	return true
 }
 
-var zz = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ*<>_"
+var zz = "#^()abc=defg123898TUVWXYZ*<>_"
 var zzLen = len(zz)
 
 func (l *LimitFile) LineConfound(line []byte) []byte {
