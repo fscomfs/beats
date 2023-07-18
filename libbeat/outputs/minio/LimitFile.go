@@ -138,7 +138,7 @@ var zzLen = len(zz)
 
 func (l *LimitFile) LineConfound(line []byte) []byte {
 	rIndex := bytes.LastIndexByte(line, '\r')
-	if rIndex > 0 && (rIndex+2) <= len(line) {
+	if rIndex > 0 && (rIndex+3) <= len(line) {
 		line = line[rIndex+1:]
 	}
 	lens := len(line)
